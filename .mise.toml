@@ -1,0 +1,23 @@
+[tools]
+zig = "master"
+act = "0.2.88"
+
+[tasks.fmt]
+description = "Format Zig sources"
+run = "zig fmt build.zig src tests"
+
+[tasks.test]
+description = "Run the Zig test suite"
+run = "zig build --cache-dir .zig-cache --global-cache-dir .zig-global-cache test"
+
+[tasks.wasm]
+description = "Build the browser/Deno WASM module"
+run = "zig build --cache-dir .zig-cache --global-cache-dir .zig-global-cache wasm"
+
+[tasks.ci]
+description = "Run the same checks as CI"
+depends = ["fmt", "test", "wasm"]
+
+[tasks.ci-local]
+description = "Run GitHub Actions locally with act"
+run = "act -P ubuntu-latest=ghcr.io/catthehacker/ubuntu:act-latest --container-architecture linux/amd64"
