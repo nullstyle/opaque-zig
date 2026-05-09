@@ -1,12 +1,9 @@
-// @ts-nocheck
-
 import { OpaqueWasm } from "./opaque_wasm.ts";
 
-/**
- * @param {Response | URL | string | ArrayBuffer | Uint8Array} source
- * @param {WebAssembly.Imports} [imports]
- */
-export async function instantiateOpaqueWasm(source, imports = {}) {
+export async function instantiateOpaqueWasm(
+  source: Response | URL | string | ArrayBuffer | Uint8Array,
+  imports: WebAssembly.Imports = {},
+): Promise<OpaqueWasm> {
   if (source instanceof Response) {
     return instantiateFromResponse(source, imports);
   }
@@ -18,27 +15,24 @@ export async function instantiateOpaqueWasm(source, imports = {}) {
   return instantiateFromBytes(source, imports);
 }
 
-/**
- * @param {URL | string} url
- * @param {WebAssembly.Imports} [imports]
- */
-export async function instantiateOpaqueWasmFromUrl(url, imports = {}) {
+export async function instantiateOpaqueWasmFromUrl(
+  url: URL | string,
+  imports: WebAssembly.Imports = {},
+): Promise<OpaqueWasm> {
   return instantiateFromResponse(fetch(url), imports);
 }
 
-/**
- * @param {ArrayBuffer | Uint8Array} bytes
- * @param {WebAssembly.Imports} [imports]
- */
-export async function instantiateOpaqueWasmFromBytes(bytes, imports = {}) {
+export async function instantiateOpaqueWasmFromBytes(
+  bytes: ArrayBuffer | Uint8Array,
+  imports: WebAssembly.Imports = {},
+): Promise<OpaqueWasm> {
   return instantiateFromBytes(bytes, imports);
 }
 
-/**
- * @param {Response | Promise<Response>} responseOrPromise
- * @param {WebAssembly.Imports} imports
- */
-async function instantiateFromResponse(responseOrPromise, imports) {
+async function instantiateFromResponse(
+  responseOrPromise: Response | Promise<Response>,
+  imports: WebAssembly.Imports,
+): Promise<OpaqueWasm> {
   const response = await responseOrPromise;
 
   if (!response.ok) {
@@ -48,7 +42,7 @@ async function instantiateFromResponse(responseOrPromise, imports) {
   if ("instantiateStreaming" in WebAssembly) {
     try {
       const result = await WebAssembly.instantiateStreaming(response.clone(), imports);
-      return new OpaqueWasm(result);
+      return assertLoaded(new OpaqueWasm(result));
     } catch (error) {
       if (!(error instanceof TypeError)) {
         throw error;
@@ -59,13 +53,17 @@ async function instantiateFromResponse(responseOrPromise, imports) {
   return instantiateFromBytes(await response.arrayBuffer(), imports);
 }
 
-/**
- * @param {ArrayBuffer | Uint8Array} bytes
- * @param {WebAssembly.Imports} imports
- */
-async function instantiateFromBytes(bytes, imports) {
+async function instantiateFromBytes(
+  bytes: ArrayBuffer | Uint8Array,
+  imports: WebAssembly.Imports,
+): Promise<OpaqueWasm> {
   const result = await WebAssembly.instantiate(bytes, imports);
-  return new OpaqueWasm(result);
+  return assertLoaded(new OpaqueWasm(result));
 }
 
-export { OpaqueWasm, OpaqueWasmError, utf8Decode, utf8Encode } from "./opaque_wasm.ts";
+function assertLoaded(wasm: OpaqueWasm): OpaqueWasm {
+  wasm.assertVersion();
+  return wasm;
+}
+
+export * from "./opaque_wasm.ts";

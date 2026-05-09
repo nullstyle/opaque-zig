@@ -1,4 +1,4 @@
-pub const wasm_abi_version: u32 = 1;
+pub const wasm_abi_version: u32 = 2;
 
 pub const Nn: usize = 32;
 pub const Nseed: usize = 32;
@@ -9,6 +9,7 @@ pub const Nm: usize = 64;
 pub const Nx: usize = 64;
 pub const Nok: usize = 32;
 pub const Noe: usize = 32;
+pub const blind_uniform_len: usize = 64;
 
 pub const envelope_len: usize = Nn + Nm;
 pub const masked_response_len: usize = Npk + envelope_len;

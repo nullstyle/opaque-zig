@@ -1,20 +1,16 @@
-// @ts-nocheck
-
 import { OpaqueWasm } from "./opaque_wasm.ts";
 
-/**
- * @param {string | URL} path
- * @param {WebAssembly.Imports} [imports]
- */
-export async function instantiateOpaqueWasmFromFile(path, imports = {}) {
+export async function instantiateOpaqueWasmFromFile(
+  path: string | URL,
+  imports: WebAssembly.Imports = {},
+): Promise<OpaqueWasm> {
   return instantiateOpaqueWasmFromBytes(await Deno.readFile(path), imports);
 }
 
-/**
- * @param {URL | string} url
- * @param {WebAssembly.Imports} [imports]
- */
-export async function instantiateOpaqueWasmFromUrl(url, imports = {}) {
+export async function instantiateOpaqueWasmFromUrl(
+  url: URL | string,
+  imports: WebAssembly.Imports = {},
+): Promise<OpaqueWasm> {
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`Failed to fetch OPAQUE WASM: HTTP ${response.status}`);
@@ -22,13 +18,14 @@ export async function instantiateOpaqueWasmFromUrl(url, imports = {}) {
   return instantiateOpaqueWasmFromBytes(await response.arrayBuffer(), imports);
 }
 
-/**
- * @param {ArrayBuffer | Uint8Array} bytes
- * @param {WebAssembly.Imports} [imports]
- */
-export async function instantiateOpaqueWasmFromBytes(bytes, imports = {}) {
+export async function instantiateOpaqueWasmFromBytes(
+  bytes: ArrayBuffer | Uint8Array,
+  imports: WebAssembly.Imports = {},
+): Promise<OpaqueWasm> {
   const result = await WebAssembly.instantiate(bytes, imports);
-  return new OpaqueWasm(result);
+  const wasm = new OpaqueWasm(result);
+  wasm.assertVersion();
+  return wasm;
 }
 
-export { OpaqueWasm, OpaqueWasmError, utf8Decode, utf8Encode } from "./opaque_wasm.ts";
+export * from "./opaque_wasm.ts";

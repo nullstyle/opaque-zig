@@ -10,6 +10,7 @@ const Nsk: usize = 32;
 const Nm: usize = 64;
 const Nx: usize = 64;
 const Noe: usize = 32;
+const blind_uniform_len: usize = 64;
 
 const envelope_len: usize = Nn + Nm;
 const masked_response_len: usize = Npk + envelope_len;
@@ -32,7 +33,7 @@ const Status = enum(i32) {
 };
 
 test "WASM ABI exported lengths match protocol constants" {
-    try std.testing.expectEqual(@as(u32, 1), opaque_wasm.version());
+    try std.testing.expectEqual(@as(u32, 2), opaque_wasm.version());
     try std.testing.expectEqual(@as(u32, registration_request_len), opaque_wasm.registrationRequestLen());
     try std.testing.expectEqual(@as(u32, registration_response_len), opaque_wasm.registrationResponseLen());
     try std.testing.expectEqual(@as(u32, registration_record_len), opaque_wasm.registrationRecordLen());
@@ -57,42 +58,42 @@ test "WASM ABI protocol exports reject null or short inputs deterministically" {
 }
 
 test "WASM ABI allocator can be reset when native pointers fit the byte ABI" {
-    if (@sizeOf(usize) > @sizeOf(u32)) return error.SkipZigTest;
-
     opaque_wasm.resetAllocator();
-    const first = opaque_wasm.allocate(16);
-    try std.testing.expect(first != 0);
+    const first = try allocBytes(16);
+    @memset(heapBytes(first, 16), 0xaa);
 
-    const second = opaque_wasm.allocate(16);
-    try std.testing.expect(second != 0);
+    const second = try allocBytes(16);
     try std.testing.expect(second >= first + 16);
 
     opaque_wasm.free(first, 16);
+    try std.testing.expect(std.mem.allEqual(u8, heapBytes(first, 16), 0));
+
     opaque_wasm.resetAllocator();
 
-    const after_reset = opaque_wasm.allocate(16);
+    const after_reset = try allocBytes(16);
     try std.testing.expectEqual(first, after_reset);
+    try std.testing.expect(std.mem.allEqual(u8, heapBytes(after_reset, 16), 0));
 }
 
 test "WASM ABI registrationStart writes a result descriptor for valid small input" {
-    if (@sizeOf(usize) > @sizeOf(u32)) return error.SkipZigTest;
-
     opaque_wasm.resetAllocator();
 
     const password = "pw";
-    var input: [Nsk + password.len]u8 = undefined;
-    input[0..Nsk].* = scalar(0x03);
-    @memcpy(input[Nsk..], password);
+    var input: [blind_uniform_len + password.len]u8 = undefined;
+    input[0..blind_uniform_len].* = uniform(0x03);
+    @memcpy(input[blind_uniform_len..], password);
 
-    var descriptor: [8]u8 = @splat(0);
+    const input_ptr = try allocCopy(&input);
+    const descriptor_ptr = try allocBytes(8);
     const status = opaque_wasm.registrationStart(
-        ptrToU32(&input).?,
+        input_ptr,
         @intCast(input.len),
-        ptrToU32(&descriptor).?,
+        descriptor_ptr,
     );
     if (status == @intFromEnum(Status.protocol_error)) return error.SkipZigTest;
     try expectStatus(.ok, status);
 
+    const descriptor = heapBytes(descriptor_ptr, 8);
     const result_ptr = std.mem.readInt(u32, descriptor[0..4], .little);
     const result_len = std.mem.readInt(u32, descriptor[4..8], .little);
     try std.testing.expect(result_ptr != 0);
@@ -112,10 +113,28 @@ fn ptrToU32(ptr: anytype) ?u32 {
     return @intCast(value);
 }
 
-fn scalar(byte: u8) [32]u8 {
-    var out: [32]u8 = @splat(0);
+fn uniform(byte: u8) [64]u8 {
+    var out: [64]u8 = @splat(0);
     out[0] = byte;
     return out;
+}
+
+fn allocBytes(len: usize) !u32 {
+    if (len > std.math.maxInt(u32)) return error.SkipZigTest;
+    const ptr = opaque_wasm.allocate(@intCast(len));
+    if (ptr == 0) return error.SkipZigTest;
+    return ptr;
+}
+
+fn allocCopy(input: []const u8) !u32 {
+    const ptr = try allocBytes(input.len);
+    @memcpy(heapBytes(ptr, input.len), input);
+    return ptr;
+}
+
+fn heapBytes(ptr: u32, len: usize) []u8 {
+    const bytes: [*]u8 = @ptrFromInt(ptr);
+    return bytes[0..len];
 }
 
 test "WASM ABI module is linked" {}
