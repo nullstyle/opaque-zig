@@ -1,6 +1,11 @@
 [tools]
 zig = "master"
+deno = "latest"
 act = "0.2.88"
+
+[tasks.versions]
+description = "Print tool versions used by CI"
+run = "zig version && deno --version"
 
 [tasks.fmt]
 description = "Format Zig sources"
@@ -14,9 +19,18 @@ run = "zig build --cache-dir .zig-cache --global-cache-dir .zig-global-cache tes
 description = "Build the browser/Deno WASM module"
 run = "zig build --cache-dir .zig-cache --global-cache-dir .zig-global-cache wasm"
 
+[tasks.deno-check]
+description = "Type-check the TypeScript WASM wrappers"
+run = "deno check web/opaque_wasm.ts web/browser.ts web/deno.ts tests/deno/wasm_smoke_test.ts"
+
+[tasks.deno-smoke]
+description = "Run the Deno WASM registration/login smoke test"
+depends = ["wasm"]
+run = "deno test --allow-read=. tests/deno/wasm_smoke_test.ts"
+
 [tasks.ci]
 description = "Run the same checks as CI"
-depends = ["fmt", "test", "wasm"]
+depends = ["versions", "fmt", "test", "wasm", "deno-check", "deno-smoke"]
 
 [tasks.ci-local]
 description = "Run GitHub Actions locally with act"

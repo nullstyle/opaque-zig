@@ -16,13 +16,13 @@ This package is early-stage cryptographic software. It has not been audited, har
 
 ## Randomness
 
-Callers must supply all protocol randomness. The Zig API accepts blinds, nonces, envelope nonces, keyshare seeds, server keys, and OPRF seed material as explicit byte arrays. Browser and Deno callers should generate these bytes with a cryptographically secure source such as `crypto.getRandomValues()`.
+Callers must supply all protocol randomness. The Zig API accepts blinds, nonces, envelope nonces, keyshare seeds, server keys, and OPRF seed material as explicit byte arrays. Browser and Deno callers should generate these bytes with a cryptographically secure source such as `crypto.getRandomValues()`. The WASM ABI v2 registration and login-start blind inputs are 64-byte uniform random values.
 
 Never reuse values that are required to be fresh, including OPRF blinds, nonces, envelope nonces, or keyshare seeds.
 
 ## WASM, Browser, and Deno
 
-The WASM interface is intentionally byte-oriented. JavaScript callers pass `Uint8Array` inputs to exported operations and receive `Uint8Array` outputs; higher-level protocol encoding can be owned by the application or by a future wrapper.
+The WASM interface is intentionally byte-oriented. JavaScript callers pass `Uint8Array` inputs to exported operations and receive `Uint8Array` outputs; wrapper helpers build binary operation inputs, and callers should render outputs as encodings such as hex or base64 when displaying them.
 
 Supported WASM operations are:
 
@@ -35,6 +35,8 @@ Supported WASM operations are:
 
 See `docs/wasm.md` for the exact ABI, byte layouts, and browser/Deno loader examples.
 
+The browser/Deno artifact is built at `zig-out/wasm/opaque.wasm`.
+
 ## Local Development
 
 This repository uses `mise` to pin and run local tools.
@@ -42,8 +44,10 @@ This repository uses `mise` to pin and run local tools.
 ```sh
 mise run test
 mise run wasm
+mise run deno-check
+mise run ci
 mise run ci-local
 ```
 
-`mise run test` runs the Zig test suite. `mise run wasm` builds the browser/Deno WASM module. `mise run ci-local` runs the GitHub Actions workflow locally with `act`.
-
+`mise run test` runs the Zig test suite. `mise run wasm` builds the browser/Deno WASM module. `mise run deno-check` type-checks the TypeScript wrappers. `mise run ci` runs the same checks as GitHub Actions, including tool version visibility. `mise run ci-local` runs the GitHub Actions workflow locally with `act`.
+`mise run deno-smoke` loads the built WASM module from Deno and completes an identity-suite registration/login smoke test through the wrapper.
