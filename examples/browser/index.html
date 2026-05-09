@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>OPAQUE WASM Browser Example</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: system-ui, sans-serif;
+      }
+
+      body {
+        margin: 2rem;
+        max-width: 48rem;
+      }
+
+      label,
+      button,
+      output {
+        display: block;
+        margin-block: 1rem;
+      }
+
+      input {
+        box-sizing: border-box;
+        display: block;
+        margin-top: 0.25rem;
+        width: 100%;
+      }
+
+      code,
+      output {
+        overflow-wrap: anywhere;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>OPAQUE WASM Browser Example</h1>
+
+    <label>
+      WASM URL
+      <input id="wasm-url" value="../../zig-out/bin/opaque.wasm">
+    </label>
+
+    <label>
+      Registration start input as UTF-8 text
+      <input id="request" value="{&quot;username&quot;:&quot;alice&quot;}">
+    </label>
+
+    <button id="run" type="button">Run registrationStart</button>
+    <output id="status">Idle</output>
+
+    <script type="module">
+      import { instantiateOpaqueWasm, utf8Decode, utf8Encode } from "../../web/browser.ts";
+
+      const wasmUrl = document.querySelector("#wasm-url");
+      const request = document.querySelector("#request");
+      const run = document.querySelector("#run");
+      const status = document.querySelector("#status");
+
+      run.addEventListener("click", async () => {
+        run.disabled = true;
+        status.value = "Loading WASM...";
+
+        try {
+          const opaque = await instantiateOpaqueWasm(wasmUrl.value);
+          const response = opaque.registrationStart(utf8Encode(request.value));
+          status.value = utf8Decode(response);
+        } catch (error) {
+          status.value = error instanceof Error ? error.message : String(error);
+        } finally {
+          run.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>
