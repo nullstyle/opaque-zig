@@ -82,6 +82,53 @@ test "server finish rejects bad KE3" {
     try std.testing.expectError(error.AuthenticationFailed, opaque_mod.serverFinish(login.server.state, finish.ke3));
 }
 
+test "empty explicit identities are rejected" {
+    if (!try oprfRuntimeSupported()) return error.SkipZigTest;
+
+    const allocator = std.testing.allocator;
+    const server_keypair = try std.crypto.dh.X25519.KeyPair.generateDeterministic(seed(0x11));
+    const reg_start = try opaque_mod.createRegistrationRequest(good_password, scalar(0x03));
+    const reg_response = try opaque_mod.createRegistrationResponse(reg_start.request, server_keypair.public_key, credential_identifier, seed64(0x22));
+
+    try std.testing.expectError(
+        error.InvalidInput,
+        opaque_mod.finalizeRegistrationRequest(opaque_mod.Suite.default, allocator, reg_start.state, reg_response, seed(0x44), "", null, undefined),
+    );
+}
+
+test "oversized context and credential identifiers are rejected" {
+    const allocator = std.testing.allocator;
+    var too_long: [std.math.maxInt(u16) + 1]u8 = @splat('x');
+    const request = messages.RegistrationRequest{ .blinded_message = @splat(0) };
+
+    try std.testing.expectError(
+        error.InvalidInput,
+        opaque_mod.createRegistrationResponse(request, @splat(0), &too_long, seed64(0x22)),
+    );
+
+    if (!try oprfRuntimeSupported()) return error.SkipZigTest;
+
+    const fixture = try register(allocator);
+    const login_start = try opaque_mod.generateKE1(good_password, scalar(0x05), seed(0x66), seed(0x77));
+    try std.testing.expectError(
+        error.InvalidInput,
+        opaque_mod.generateKE2(
+            .{ .context = &too_long, .ksf = .identity },
+            fixture.server_private_key,
+            fixture.server_public_key,
+            fixture.record,
+            credential_identifier,
+            fixture.oprf_seed,
+            login_start.ke1,
+            seed(0x88),
+            seed(0x99),
+            seed(0xaa),
+            null,
+            null,
+        ),
+    );
+}
+
 const good_password = "correct horse battery staple";
 const credential_identifier = "alice@example.test";
 

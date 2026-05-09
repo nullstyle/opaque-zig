@@ -253,30 +253,8 @@ fn reduceUniformScalar(uniform: [64]u8) Scalar {
     return out;
 }
 
-fn scalarToInt(scalar: Scalar) u256 {
-    return std.mem.readInt(u256, &scalar, .little);
-}
-
-fn intToScalar(n: u256) Scalar {
-    var out: Scalar = undefined;
-    std.mem.writeInt(u256, &out, n, .little);
-    return out;
-}
-
 fn invertScalar(scalar: Scalar) Scalar {
-    const order = ScalarOps.field_order;
-    var base = scalarToInt(scalar);
-    var exponent = order - 2;
-    var result: u256 = 1;
-    while (exponent != 0) : (exponent >>= 1) {
-        if ((exponent & 1) == 1) result = modMul(result, base);
-        base = modMul(base, base);
-    }
-    return intToScalar(result);
-}
-
-fn modMul(a: u256, b: u256) u256 {
-    return @intCast((@as(u512, a) * @as(u512, b)) % ScalarOps.field_order);
+    return ScalarOps.Scalar.fromBytes(scalar).invert().toBytes();
 }
 
 fn fromUniformCompat(h: [64]u8) Ristretto255 {

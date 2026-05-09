@@ -127,7 +127,7 @@ pub fn finalizeRegistrationRequest(
     const masking_key = deriveMaskingKey(randomized_password);
     const keys = envelopeKeys(randomized_password, envelope_nonce);
     const client_keypair = try X25519.KeyPair.generateDeterministic(keys.client_private_key);
-    const envelope = createEnvelope(keys.auth_key, envelope_nonce, response.server_public_key, client_keypair.public_key, server_identity, client_identity);
+    const envelope = try createEnvelope(keys.auth_key, envelope_nonce, response.server_public_key, client_keypair.public_key, server_identity, client_identity);
     return .{
         .record = .{
             .client_public_key = client_keypair.public_key,
@@ -180,22 +180,18 @@ pub fn generateKE2(
 ) Error!ServerLoginStartResult {
     const credential_response = try createCredentialResponse(record, server_public_key, credential_identifier, oprf_seed, ke1.credential_request, masking_nonce);
     const server_keyshare = try X25519.KeyPair.generateDeterministic(server_keyshare_seed);
-    const resolved_server_identity = server_identity orelse &server_public_key;
-    const resolved_client_identity = client_identity orelse &record.client_public_key;
-    const preamble = try buildPreambleHash(suite.context, resolved_client_identity, ke1, resolved_server_identity, credential_response, server_nonce, server_keyshare.public_key);
+    const resolved_server_identity = try resolveIdentity(server_identity, &server_public_key);
+    const resolved_client_identity = try resolveIdentity(client_identity, &record.client_public_key);
+    const preamble_hash = try buildPreambleHash(suite.context, resolved_client_identity, ke1, resolved_server_identity, credential_response, server_nonce, server_keyshare.public_key);
 
     const dh1 = try X25519.scalarmult(server_keyshare.secret_key, ke1.auth_request.client_public_keyshare);
     const dh2 = try X25519.scalarmult(server_private_key, ke1.auth_request.client_public_keyshare);
     const dh3 = try X25519.scalarmult(server_keyshare.secret_key, record.client_public_key);
-    const derived = deriveKeys(&dh1, &dh2, &dh3, preamble);
+    const derived = deriveKeys(&dh1, &dh2, &dh3, preamble_hash);
 
     var server_mac: [c.Nm]u8 = undefined;
-    HmacSha512.create(&server_mac, &preamble, &derived.server_mac_key);
-    var mac_hash_input: [c.Nh + c.Nm]u8 = undefined;
-    @memcpy(mac_hash_input[0..c.Nh], &preamble);
-    @memcpy(mac_hash_input[c.Nh..], &server_mac);
-    var mac_hash: [c.Nh]u8 = undefined;
-    Sha512.hash(&mac_hash_input, &mac_hash, .{});
+    HmacSha512.create(&server_mac, &preamble_hash, &derived.server_mac_key);
+    const mac_hash = try buildClientMacHash(suite.context, resolved_client_identity, ke1, resolved_server_identity, credential_response, server_nonce, server_keyshare.public_key, &server_mac);
 
     var expected_client_mac: [c.Nm]u8 = undefined;
     HmacSha512.create(&expected_client_mac, &mac_hash, &derived.client_mac_key);
@@ -226,26 +222,22 @@ pub fn generateKE3(
     io: std.Io,
 ) Error!LoginFinishResult {
     const recovered = try recoverCredentials(suite, allocator, state.password, state.blind, ke2.credential_response, server_identity, client_identity, io);
-    const resolved_server_identity = server_identity orelse &recovered.server_public_key;
-    const resolved_client_identity = client_identity orelse &recovered.client_public_key;
-    const preamble = try buildPreambleHash(suite.context, resolved_client_identity, state.ke1, resolved_server_identity, ke2.credential_response, ke2.auth_response.server_nonce, ke2.auth_response.server_public_keyshare);
+    const resolved_server_identity = try resolveIdentity(server_identity, &recovered.server_public_key);
+    const resolved_client_identity = try resolveIdentity(client_identity, &recovered.client_public_key);
+    const preamble_hash = try buildPreambleHash(suite.context, resolved_client_identity, state.ke1, resolved_server_identity, ke2.credential_response, ke2.auth_response.server_nonce, ke2.auth_response.server_public_keyshare);
 
     const dh1 = try X25519.scalarmult(state.client_secret, ke2.auth_response.server_public_keyshare);
     const dh2 = try X25519.scalarmult(state.client_secret, recovered.server_public_key);
     const dh3 = try X25519.scalarmult(recovered.client_private_key, ke2.auth_response.server_public_keyshare);
-    const derived = deriveKeys(&dh1, &dh2, &dh3, preamble);
+    const derived = deriveKeys(&dh1, &dh2, &dh3, preamble_hash);
 
     var expected_server_mac: [c.Nm]u8 = undefined;
-    HmacSha512.create(&expected_server_mac, &preamble, &derived.server_mac_key);
+    HmacSha512.create(&expected_server_mac, &preamble_hash, &derived.server_mac_key);
     if (!crypto.timing_safe.eql([c.Nm]u8, expected_server_mac, ke2.auth_response.server_mac)) {
         return error.AuthenticationFailed;
     }
 
-    var mac_hash_input: [c.Nh + c.Nm]u8 = undefined;
-    @memcpy(mac_hash_input[0..c.Nh], &preamble);
-    @memcpy(mac_hash_input[c.Nh..], &expected_server_mac);
-    var mac_hash: [c.Nh]u8 = undefined;
-    Sha512.hash(&mac_hash_input, &mac_hash, .{});
+    const mac_hash = try buildClientMacHash(suite.context, resolved_client_identity, state.ke1, resolved_server_identity, ke2.credential_response, ke2.auth_response.server_nonce, ke2.auth_response.server_public_keyshare, &expected_server_mac);
 
     var client_mac: [c.Nm]u8 = undefined;
     HmacSha512.create(&client_mac, &mac_hash, &derived.client_mac_key);
@@ -300,7 +292,7 @@ fn recoverCredentials(
     const keys = envelopeKeys(rp, envelope.nonce);
     const client_keypair = try X25519.KeyPair.generateDeterministic(keys.client_private_key);
 
-    const expected_envelope = createEnvelope(keys.auth_key, envelope.nonce, server_public_key, client_keypair.public_key, server_identity, client_identity);
+    const expected_envelope = try createEnvelope(keys.auth_key, envelope.nonce, server_public_key, client_keypair.public_key, server_identity, client_identity);
     if (!crypto.timing_safe.eql([c.Nm]u8, expected_envelope.auth_tag, envelope.auth_tag)) {
         return error.AuthenticationFailed;
     }
@@ -389,13 +381,21 @@ fn randomizedPassword(suite: Suite, allocator: std.mem.Allocator, oprf_output: [
 }
 
 fn deriveOprfKey(oprf_seed: [c.Nh]u8, credential_identifier: []const u8) Error![c.Nsk]u8 {
-    var info_buf: [1024]u8 = undefined;
-    if (credential_identifier.len + "OprfKey".len > info_buf.len) return error.InvalidInput;
+    if (credential_identifier.len > std.math.maxInt(u16)) return error.InvalidInput;
+    var info_buf: [std.math.maxInt(u16) + "OprfKey".len]u8 = undefined;
     @memcpy(info_buf[0..credential_identifier.len], credential_identifier);
     @memcpy(info_buf[credential_identifier.len..][0.."OprfKey".len], "OprfKey");
     var seed: [c.Nok]u8 = undefined;
     HkdfSha512.expand(&seed, info_buf[0 .. credential_identifier.len + "OprfKey".len], oprf_seed);
     return (try oprf.deriveKeyPair(seed, "OPAQUE-DeriveKeyPair")).sk;
+}
+
+fn resolveIdentity(explicit: ?[]const u8, fallback: *const [c.Npk]u8) Error![]const u8 {
+    if (explicit) |identity| {
+        if (identity.len == 0 or identity.len > std.math.maxInt(u16)) return error.InvalidInput;
+        return identity;
+    }
+    return fallback;
 }
 
 fn createEnvelope(
@@ -405,9 +405,9 @@ fn createEnvelope(
     client_public_key: [c.Npk]u8,
     server_identity: ?[]const u8,
     client_identity: ?[]const u8,
-) messages.Envelope {
-    const sid = server_identity orelse &server_public_key;
-    const cid = client_identity orelse &client_public_key;
+) Error!messages.Envelope {
+    const sid = try resolveIdentity(server_identity, &server_public_key);
+    const cid = try resolveIdentity(client_identity, &client_public_key);
     var sid_len: [2]u8 = undefined;
     var cid_len: [2]u8 = undefined;
     std.mem.writeInt(u16, &sid_len, @intCast(sid.len), .big);
@@ -467,29 +467,66 @@ fn buildPreambleHash(
     server_nonce: [c.Nn]u8,
     server_public_keyshare: [c.Npk]u8,
 ) Error![c.Nh]u8 {
-    var buf: [4096]u8 = undefined;
-    var writer: std.Io.Writer = .fixed(&buf);
-    writer.writeAll("OPAQUEv1-") catch return error.NoSpaceLeft;
-    writeOpaque16(&writer, context) catch return error.NoSpaceLeft;
-    writeOpaque16(&writer, client_identity) catch return error.NoSpaceLeft;
-    var ke1_bytes: [c.ke1_len]u8 = undefined;
-    ke1.toBytesInto(&ke1_bytes);
-    writer.writeAll(&ke1_bytes) catch return error.NoSpaceLeft;
-    writeOpaque16(&writer, server_identity) catch return error.NoSpaceLeft;
-    var credential_response_bytes: [c.credential_response_len]u8 = undefined;
-    credential_response.toBytesInto(&credential_response_bytes);
-    writer.writeAll(&credential_response_bytes) catch return error.NoSpaceLeft;
-    writer.writeAll(&server_nonce) catch return error.NoSpaceLeft;
-    writer.writeAll(&server_public_keyshare) catch return error.NoSpaceLeft;
+    var h = Sha512.init(.{});
+    try hashPreambleFields(&h, context, client_identity, ke1, server_identity, credential_response, server_nonce, server_public_keyshare);
     var out: [c.Nh]u8 = undefined;
-    Sha512.hash(writer.buffered(), &out, .{});
+    h.final(&out);
     return out;
 }
 
-fn writeOpaque16(writer: *std.Io.Writer, bytes: []const u8) !void {
-    if (bytes.len > std.math.maxInt(u16)) return error.NoSpaceLeft;
+fn buildClientMacHash(
+    context: []const u8,
+    client_identity: []const u8,
+    ke1: messages.KE1,
+    server_identity: []const u8,
+    credential_response: messages.CredentialResponse,
+    server_nonce: [c.Nn]u8,
+    server_public_keyshare: [c.Npk]u8,
+    server_mac: *const [c.Nm]u8,
+) Error![c.Nh]u8 {
+    var h = Sha512.init(.{});
+    try hashPreambleFields(&h, context, client_identity, ke1, server_identity, credential_response, server_nonce, server_public_keyshare);
+    h.update(server_mac);
+    var out: [c.Nh]u8 = undefined;
+    h.final(&out);
+    return out;
+}
+
+fn hashPreambleFields(
+    h: *Sha512,
+    context: []const u8,
+    client_identity: []const u8,
+    ke1: messages.KE1,
+    server_identity: []const u8,
+    credential_response: messages.CredentialResponse,
+    server_nonce: [c.Nn]u8,
+    server_public_keyshare: [c.Npk]u8,
+) Error!void {
+    try requireOpaque16(context);
+    try requireOpaque16(client_identity);
+    try requireOpaque16(server_identity);
+
+    h.update("OPAQUEv1-");
+    hashOpaque16(h, context);
+    hashOpaque16(h, client_identity);
+    var ke1_bytes: [c.ke1_len]u8 = undefined;
+    ke1.toBytesInto(&ke1_bytes);
+    h.update(&ke1_bytes);
+    hashOpaque16(h, server_identity);
+    var credential_response_bytes: [c.credential_response_len]u8 = undefined;
+    credential_response.toBytesInto(&credential_response_bytes);
+    h.update(&credential_response_bytes);
+    h.update(&server_nonce);
+    h.update(&server_public_keyshare);
+}
+
+fn requireOpaque16(bytes: []const u8) Error!void {
+    if (bytes.len > std.math.maxInt(u16)) return error.InvalidInput;
+}
+
+fn hashOpaque16(h: *Sha512, bytes: []const u8) void {
     var len: [2]u8 = undefined;
     std.mem.writeInt(u16, &len, @intCast(bytes.len), .big);
-    try writer.writeAll(&len);
-    try writer.writeAll(bytes);
+    h.update(&len);
+    h.update(bytes);
 }

@@ -48,6 +48,56 @@ test "deterministic registration and login round trip" {
     _ = try messages.RegistrationRecord.parse(&record_bytes);
 }
 
+test "round trip supports application context and explicit identities" {
+    if (!try oprfRuntimeSupported()) return error.SkipZigTest;
+
+    const allocator = std.testing.allocator;
+    const suite = opaque_mod.Suite{ .context = "OPAQUE-POC", .ksf = .identity };
+    const password = "correct horse battery staple";
+    const credential_identifier = "alice@example.test";
+    const client_identity = "alice";
+    const server_identity = "bob";
+
+    const server_keypair = try std.crypto.dh.X25519.KeyPair.generateDeterministic(seed(0x11));
+    const oprf_seed = seed64(0x22);
+
+    const reg_start = try opaque_mod.createRegistrationRequest(password, scalar(0x03));
+    const reg_response = try opaque_mod.createRegistrationResponse(reg_start.request, server_keypair.public_key, credential_identifier, oprf_seed);
+    const reg_finish = try opaque_mod.finalizeRegistrationRequest(suite, allocator, reg_start.state, reg_response, seed(0x44), server_identity, client_identity, undefined);
+
+    const login_start = try opaque_mod.generateKE1(password, scalar(0x05), seed(0x66), seed(0x77));
+    const server_start = try opaque_mod.generateKE2(
+        suite,
+        server_keypair.secret_key,
+        server_keypair.public_key,
+        reg_finish.record,
+        credential_identifier,
+        oprf_seed,
+        login_start.ke1,
+        seed(0x88),
+        seed(0x99),
+        seed(0xaa),
+        server_identity,
+        client_identity,
+    );
+
+    const login_finish = try opaque_mod.generateKE3(suite, allocator, login_start.state, server_start.ke2, server_identity, client_identity, undefined);
+    const server_session = try opaque_mod.serverFinish(server_start.state, login_finish.ke3);
+
+    try std.testing.expectEqualSlices(u8, &server_session, &login_finish.session_key);
+}
+
+test "credential identifiers above historical scratch limit are supported" {
+    if (!try oprfRuntimeSupported()) return error.SkipZigTest;
+
+    const password = "correct horse battery staple";
+    const server_keypair = try std.crypto.dh.X25519.KeyPair.generateDeterministic(seed(0x11));
+    var credential_identifier: [2048]u8 = @splat('a');
+
+    const reg_start = try opaque_mod.createRegistrationRequest(password, scalar(0x03));
+    _ = try opaque_mod.createRegistrationResponse(reg_start.request, server_keypair.public_key, &credential_identifier, seed64(0x22));
+}
+
 fn seed(byte: u8) [32]u8 {
     return @splat(byte);
 }
