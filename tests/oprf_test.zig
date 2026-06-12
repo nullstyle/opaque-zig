@@ -30,6 +30,38 @@ test "RFC 9497 ristretto255-SHA512 OPRF test vector 1" {
     try std.testing.expectEqualSlices(u8, &expected_output, &direct_output);
 }
 
+test "RFC 9497 ristretto255-SHA512 OPRF test vector 2" {
+    if (!try oprfRuntimeSupported()) return error.SkipZigTest;
+
+    // RFC 9497 Appendix A.1.1.2 (OPRF mode, ristretto255-SHA512). Same Seed/
+    // KeyInfo/skSm and Blind as Test Vector 1, but a different (17-byte) Input,
+    // so BlindedElement / EvaluationElement / Output all differ.
+    const seed = try hex32("a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3");
+    const key_info = try hex("74657374206b6579", 8);
+    const expected_sk = try hex32("5ebcea5ee37023ccb9fc2d2019f9d7737be85591ae8652ffa9ef0f4d37063b0e");
+
+    const kp = try oprf.deriveKeyPair(seed, &key_info);
+    try std.testing.expectEqualSlices(u8, &expected_sk, &kp.sk);
+
+    const input = try hex("5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a", 17);
+    const blind = try hex32("64d37aed22a27f5191de1c1d69fadb899d8862b58eb4220029e036ec4c1f6706");
+    const expected_blinded = try hex32("da27ef466870f5f15296299850aa088629945a17d1f5b7f5ff043f76b3c06418");
+    const expected_evaluated = try hex32("b4cbf5a4f1eeda5a63ce7b77c7d23f461db3fcab0dd28e4e17cecb5c90d02c25");
+    const expected_output = try hex64("f4a74c9c592497375e796aa837e907b1a045d34306a749db9f34221f7e750cb4f2a6413a6bf6fa5e19ba6348eb673934a722a7ede2e7621306d18951e7cf2c73");
+
+    const blinded = try oprf.blindWithScalar(&input, blind);
+    try std.testing.expectEqualSlices(u8, &expected_blinded, &oprf.serializeElement(blinded.blinded_element));
+
+    const evaluated = try oprf.blindEvaluate(kp.sk, blinded.blinded_element);
+    try std.testing.expectEqualSlices(u8, &expected_evaluated, &oprf.serializeElement(evaluated));
+
+    const output = try oprf.finalize(&input, blinded.blind, evaluated);
+    try std.testing.expectEqualSlices(u8, &expected_output, &output);
+
+    const direct_output = try oprf.evaluate(kp.sk, &input);
+    try std.testing.expectEqualSlices(u8, &expected_output, &direct_output);
+}
+
 test "deterministic roundtrip matches direct evaluation" {
     if (!try oprfRuntimeSupported()) return error.SkipZigTest;
 

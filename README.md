@@ -16,7 +16,7 @@ This package is early-stage cryptographic software. It has not been audited, har
 
 ## Randomness
 
-Callers must supply all protocol randomness. The Zig API accepts blinds, nonces, envelope nonces, keyshare seeds, server keys, and OPRF seed material as explicit byte arrays. Browser and Deno callers should generate these bytes with a cryptographically secure source such as `crypto.getRandomValues()`. The WASM ABI v2 registration and login-start blind inputs are 64-byte uniform random values.
+Callers must supply all protocol randomness. The Zig API accepts blinds, nonces, envelope nonces, keyshare seeds, server keys, and OPRF seed material as explicit byte arrays. Browser and Deno callers should generate these bytes with a cryptographically secure source such as `crypto.getRandomValues()`. The WASM ABI v3 registration and login-start blind inputs are 64-byte uniform random values.
 
 Never reuse values that are required to be fresh, including OPRF blinds, nonces, envelope nonces, or keyshare seeds.
 
@@ -51,3 +51,33 @@ mise run ci-local
 
 `mise run test` runs the Zig test suite. `mise run wasm` builds the browser/Deno WASM module. `mise run deno-check` type-checks the TypeScript wrappers. `mise run ci` runs the same checks as GitHub Actions, including tool version visibility. `mise run ci-local` runs the GitHub Actions workflow locally with `act`.
 `mise run deno-smoke` loads the built WASM module from Deno and completes an identity-suite registration/login smoke test through the wrapper.
+
+Run bounded campaigns with Zig's built-in fuzzer:
+
+```sh
+zig build fuzz-messages --fuzz=100K
+zig build fuzz-oprf --fuzz=100K
+zig build fuzz-opaque-roundtrip --fuzz=100K
+zig build fuzz-opaque-tamper --fuzz=100K
+zig build fuzz-opaque-negative --fuzz=100K
+zig build fuzz-validation --fuzz=100K
+zig build fuzz-wasm --fuzz=100K
+zig build fuzz-wide --fuzz=100K
+```
+
+## License
+
+Licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or
+  <http://www.apache.org/licenses/LICENSE-2.0>)
+- MIT license ([LICENSE-MIT](LICENSE-MIT) or
+  <http://opensource.org/licenses/MIT>)
+
+at your option.
+
+### Contribution
+
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in the work by you, as defined in the Apache-2.0 license, shall be
+dual licensed as above, without any additional terms or conditions.
