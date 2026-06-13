@@ -108,9 +108,21 @@ fn addFuzzStep(b: *std.Build, fuzz_mod: *std.Build.Module, name: []const u8, des
         .name = name,
         .root_module = fuzz_mod,
     });
+    forceLlvmForFuzzing(fuzz_tests);
     const run_fuzz_tests = b.addRunArtifact(fuzz_tests);
     const fuzz_step = b.step(name, description);
     fuzz_step.dependOn(&run_fuzz_tests.step);
+}
+
+// Zig's fuzzer needs the LLVM backend for coverage instrumentation. The
+// self-hosted x86_64 backend (the default for Debug native builds on
+// x86_64-linux) emits no coverage program counters, so `zig build fuzz-*`
+// fails there with "corrupted coverage file ...: pcs_len was zero" (and SEGVs
+// on self-hosted aarch64). CI's macOS runner passes only because aarch64-macOS
+// falls back to LLVM. Force LLVM here so fuzzing works on every platform; the
+// regular test/wasm steps keep the (faster) default backend.
+fn forceLlvmForFuzzing(fuzz_tests: *std.Build.Step.Compile) void {
+    fuzz_tests.use_llvm = true;
 }
 
 fn addFilteredFuzzStep(
@@ -125,6 +137,7 @@ fn addFilteredFuzzStep(
         .root_module = fuzz_mod,
         .filters = &.{filter},
     });
+    forceLlvmForFuzzing(fuzz_tests);
     const run_fuzz_tests = b.addRunArtifact(fuzz_tests);
     const fuzz_step = b.step(name, description);
     fuzz_step.dependOn(&run_fuzz_tests.step);
