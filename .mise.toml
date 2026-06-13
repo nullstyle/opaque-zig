@@ -1,6 +1,24 @@
+# Toolchain pins for CI and local development.
+#
+# REQUIRED ZIG VERSION: 0.17.0-dev.813+2153f8143
+#
+# This repository builds against the Zig 0.17.0-dev Build API. mise's `core:zig`
+# backend only exposes tagged stable releases plus the rolling `master` channel
+# (`mise ls-remote zig`) -- it cannot pin an individual dev build by its
+# `0.17.0-dev.NNN+hash` identity. There is no stable 0.17.x release yet, so the
+# only way to stay on the 0.17.0-dev line is to track `master`.
+#
+# `master` is therefore intentional, NOT a loose default: pinning to any tagged
+# release (e.g. 0.16.0) would fail to compile this project's 0.17-dev build.zig.
+# If a build break appears, verify `zig version` matches the line above and, if
+# needed, install the exact build manually:
+#   mise use zig@ref:0.17.0-dev.813+2153f8143   # (if/when addressable)
+# or download it from https://ziglang.org/download/ and `mise use zig@path:...`.
 [tools]
 zig = "master"
-deno = "latest"
+# Pin deno to its current major line (2.x) rather than "latest" so a future
+# major bump can't silently change CI behavior.
+deno = "2"
 act = "0.2.88"
 
 [tasks.versions]
@@ -8,7 +26,11 @@ description = "Print tool versions used by CI"
 run = "zig version && deno --version"
 
 [tasks.fmt]
-description = "Format Zig sources"
+description = "Check that Zig sources are formatted (fails CI on unformatted code)"
+run = "zig fmt --check build.zig src tests"
+
+[tasks.fmt-fix]
+description = "Rewrite Zig sources in place to canonical formatting"
 run = "zig fmt build.zig src tests"
 
 [tasks.test]
@@ -16,21 +38,71 @@ description = "Run the Zig test suite"
 run = "zig build --cache-dir .zig-cache --global-cache-dir .zig-global-cache test"
 
 [tasks.wasm]
-description = "Build the browser/Deno WASM module"
+description = "Build the browser/Deno WASM module (production artifact CI uploads, no test exports)"
 run = "zig build --cache-dir .zig-cache --global-cache-dir .zig-global-cache wasm"
+
+[tasks.wasm-test]
+description = "Build the WASM module WITH the gated identity test-vector exports (-Dtest-exports=true), to a separate prefix under zig-out/ so it never clobbers the production `wasm` artifact"
+run = "zig build --cache-dir .zig-cache --global-cache-dir .zig-global-cache wasm -Dtest-exports=true --prefix zig-out/test"
+
+[tasks.fuzz-messages]
+description = "Run a bounded protocol message parser fuzz campaign"
+run = "zig build --cache-dir .zig-cache --global-cache-dir .zig-global-cache fuzz-messages --fuzz=2048"
+
+[tasks.fuzz-oprf]
+description = "Run a bounded OPRF fuzz campaign"
+run = "zig build --cache-dir .zig-cache --global-cache-dir .zig-global-cache fuzz-oprf --fuzz=512"
+
+[tasks.fuzz-opaque-roundtrip]
+description = "Run a bounded OPAQUE round-trip fuzz campaign"
+run = "zig build --cache-dir .zig-cache --global-cache-dir .zig-global-cache fuzz-opaque-roundtrip --fuzz=256"
+
+[tasks.fuzz-opaque-tamper]
+description = "Run a bounded OPAQUE tamper fuzz campaign"
+run = "zig build --cache-dir .zig-cache --global-cache-dir .zig-global-cache fuzz-opaque-tamper --fuzz=256"
+
+[tasks.fuzz-opaque-negative]
+description = "Run a bounded malformed OPAQUE state fuzz campaign"
+run = "zig build --cache-dir .zig-cache --global-cache-dir .zig-global-cache fuzz-opaque-negative --fuzz=256"
+
+[tasks.fuzz-validation]
+description = "Run a bounded protocol validation fuzz campaign"
+run = "zig build --cache-dir .zig-cache --global-cache-dir .zig-global-cache fuzz-validation --fuzz=512"
+
+[tasks.fuzz-wasm]
+description = "Run a bounded WASM ABI fuzz campaign"
+run = "zig build --cache-dir .zig-cache --global-cache-dir .zig-global-cache fuzz-wasm --fuzz=2048"
+
+[tasks.fuzz-wide]
+description = "Run a bounded broad public API fuzz campaign"
+run = "zig build --cache-dir .zig-cache --global-cache-dir .zig-global-cache fuzz-wide --fuzz=2048"
+
+[tasks.fuzz-ci]
+description = "Run bounded fuzz campaigns for CI"
+depends = [
+    "fuzz-messages",
+    "fuzz-oprf",
+    "fuzz-opaque-roundtrip",
+    "fuzz-opaque-tamper",
+    "fuzz-opaque-negative",
+    "fuzz-validation",
+    "fuzz-wasm",
+    "fuzz-wide",
+]
 
 [tasks.deno-check]
 description = "Type-check the TypeScript WASM wrappers"
 run = "deno check web/opaque_wasm.ts web/browser.ts web/deno.ts tests/deno/wasm_smoke_test.ts"
 
 [tasks.deno-smoke]
-description = "Run the Deno WASM registration/login smoke test"
-depends = ["wasm"]
-run = "deno test --allow-read=. tests/deno/wasm_smoke_test.ts"
+description = "Run the Deno WASM registration/login smoke test against the test-exports build"
+depends = ["wasm-test"]
+env = { OPAQUE_WASM_PATH = "zig-out/test/wasm/opaque.wasm" }
+run = "deno test --allow-read=. --allow-env=OPAQUE_WASM_PATH tests/deno/wasm_smoke_test.ts"
 
 [tasks.ci]
 description = "Run the same checks as CI"
-depends = ["versions", "fmt", "test", "wasm", "deno-check", "deno-smoke"]
+depends = ["versions", "fmt", "test", "fuzz-ci", "wasm", "deno-check", "deno-smoke"]
 
 [tasks.ci-local]
 description = "Run GitHub Actions locally with act"

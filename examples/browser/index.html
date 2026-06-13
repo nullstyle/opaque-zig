@@ -72,17 +72,17 @@
 
         try {
           const opaque = await instantiateOpaqueWasm(wasmUrl.value);
-          opaque.assertVersion(2);
+          opaque.assertVersion(3);
 
-          const blind = crypto.getRandomValues(new Uint8Array(64));
+          const blindUniform = crypto.getRandomValues(new Uint8Array(64));
           const input = encodeRegistrationStartInput({
-            blind,
+            blindUniform,
             password: utf8Encode(password.value),
           });
           const response = opaque.registrationStart(input);
 
           status.value = [
-            `blind.hex=${bytesToHex(blind)}`,
+            `blindUniform.hex=${bytesToHex(blindUniform)}`,
             `response.hex=${bytesToHex(response)}`,
             `response.base64=${bytesToBase64(response)}`,
           ].join("\n\n");

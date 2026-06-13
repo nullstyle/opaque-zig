@@ -5,11 +5,48 @@ on:
     branches: [main]
   pull_request:
 
+# Cancel superseded runs for the same ref (e.g. rapid pushes / PR updates).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: jdx/mise-action@v2
-      - run: mise install
+      # actions/checkout@v4 -> pinned to commit 34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      # jdx/mise-action@v2 -> pinned to commit c37c93293d6b742fc901e1406b8f764f6fb19dac
+      # mise-action installs every tool declared in .mise.toml, so no separate
+      # `mise install` step is needed.
+      - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac
+
       - run: mise run ci
+
+      # Publish the WASM artifact (plus a SHA-256 checksum) from the Linux job
+      # only -- the module is platform-independent, so one upload is enough and
+      # avoids duplicate-artifact-name collisions across the matrix.
+      - name: Checksum WASM artifact
+        if: matrix.os == 'ubuntu-latest'
+        run: shasum -a 256 zig-out/wasm/opaque.wasm | tee zig-out/wasm/opaque.wasm.sha256
+
+      # actions/upload-artifact@v4 -> pinned to commit ea165f8d65b6e75b540449e92b4886f43607fa02
+      - name: Upload WASM artifact
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: opaque-wasm
+          path: |
+            zig-out/wasm/opaque.wasm
+            zig-out/wasm/opaque.wasm.sha256
+          if-no-files-found: error

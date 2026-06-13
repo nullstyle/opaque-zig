@@ -74,10 +74,6 @@ pub fn deriveKeyPair(seed: Seed, info: []const u8) Error!KeyPair {
     return error.DeriveKeyPairError;
 }
 
-pub fn DeriveKeyPair(seed: Seed, info: []const u8) Error!KeyPair {
-    return deriveKeyPair(seed, info);
-}
-
 pub fn blindWithScalar(input: []const u8, blind: Scalar) Error!BlindResult {
     try requireU16Length(input);
     try validateNonZeroScalar(blind);
@@ -87,17 +83,9 @@ pub fn blindWithScalar(input: []const u8, blind: Scalar) Error!BlindResult {
     return .{ .blind = blind, .blinded_element = blinded_element };
 }
 
-pub fn Blind(input: []const u8, blind: Scalar) Error!BlindResult {
-    return blindWithScalar(input, blind);
-}
-
 pub fn blindWithRandomBytes(input: []const u8, uniform_bytes: [random_scalar_uniform_length]u8) Error!BlindResult {
     const blind = try randomScalarFromUniformBytes(uniform_bytes);
     return blindWithScalar(input, blind);
-}
-
-pub fn BlindWithRandomBytes(input: []const u8, uniform_bytes: [random_scalar_uniform_length]u8) Error!BlindResult {
-    return blindWithRandomBytes(input, uniform_bytes);
 }
 
 pub fn randomScalarFromIo(io: std.Io) Scalar {
@@ -109,15 +97,15 @@ pub fn blindEvaluate(sk: Scalar, blinded_element: Element) Error!Element {
     return blinded_element.mul(sk) catch return error.InvalidInput;
 }
 
-pub fn BlindEvaluate(sk: Scalar, blinded_element: Element) Error!Element {
-    return blindEvaluate(sk, blinded_element);
-}
-
 pub fn finalize(input: []const u8, blind: Scalar, evaluated_element: Element) Error!Output {
     try requireU16Length(input);
     try validateNonZeroScalar(blind);
 
-    const inverse = invertScalar(blind);
+    var inverse = invertScalar(blind);
+    // The inverse blind is secret (it reverses the OPRF blinding); wipe it after
+    // the unblinding multiply so it does not linger on the stack. RFC 9807
+    // Section 4.1.3.
+    defer std.crypto.secureZero(u8, &inverse);
     const unblinded = evaluated_element.mul(inverse) catch return error.InvalidInput;
     const unblinded_bytes = serializeElement(unblinded);
 
@@ -129,10 +117,6 @@ pub fn finalize(input: []const u8, blind: Scalar, evaluated_element: Element) Er
     var out: Output = undefined;
     h.final(&out);
     return out;
-}
-
-pub fn Finalize(input: []const u8, blind: Scalar, evaluated_element: Element) Error!Output {
-    return finalize(input, blind, evaluated_element);
 }
 
 pub fn evaluate(sk: Scalar, input: []const u8) Error!Output {
@@ -153,10 +137,6 @@ pub fn evaluate(sk: Scalar, input: []const u8) Error!Output {
     return out;
 }
 
-pub fn Evaluate(sk: Scalar, input: []const u8) Error!Output {
-    return evaluate(sk, input);
-}
-
 pub fn hashToGroup(input: []const u8) Error!Element {
     try requireU16Length(input);
 
@@ -167,16 +147,8 @@ pub fn hashToGroup(input: []const u8) Error!Element {
     return element;
 }
 
-pub fn HashToGroup(input: []const u8) Error!Element {
-    return hashToGroup(input);
-}
-
 pub fn hashToScalar(input: []const u8) Scalar {
     return hashToScalarWithDst(input, "HashToScalar-" ++ context_string);
-}
-
-pub fn HashToScalar(input: []const u8) Scalar {
-    return hashToScalar(input);
 }
 
 pub fn randomScalarFromUniformBytes(uniform_bytes: [random_scalar_uniform_length]u8) Error!Scalar {
@@ -189,35 +161,19 @@ pub fn serializeElement(element: Element) SerializedElement {
     return element.toBytes();
 }
 
-pub fn SerializeElement(element: Element) SerializedElement {
-    return serializeElement(element);
-}
-
 pub fn deserializeElement(bytes: SerializedElement) Error!Element {
     const element = Ristretto255.fromBytes(bytes) catch return error.DeserializeError;
     element.rejectIdentity() catch return error.DeserializeError;
     return element;
 }
 
-pub fn DeserializeElement(bytes: SerializedElement) Error!Element {
-    return deserializeElement(bytes);
-}
-
 pub fn serializeScalar(scalar: Scalar) Scalar {
     return scalar;
-}
-
-pub fn SerializeScalar(scalar: Scalar) Scalar {
-    return serializeScalar(scalar);
 }
 
 pub fn deserializeScalar(bytes: Scalar) Error!Scalar {
     ScalarOps.rejectNonCanonical(bytes) catch return error.DeserializeError;
     return bytes;
-}
-
-pub fn DeserializeScalar(bytes: Scalar) Error!Scalar {
-    return deserializeScalar(bytes);
 }
 
 fn scalarMultGenerator(scalar: Scalar) !Element {
@@ -246,11 +202,16 @@ fn hashToScalarWithDstParts(parts: []const []const u8, comptime dst: []const u8)
 }
 
 fn reduceUniformScalar(uniform: [64]u8) Scalar {
-    const value = std.mem.readInt(u512, &uniform, .little);
-    const reduced: u256 = @intCast(value % ScalarOps.field_order);
-    var out: Scalar = undefined;
-    std.mem.writeInt(u256, &out, reduced, .little);
-    return out;
+    // Constant-time wide reduction of a 512-bit little-endian value mod L.
+    //
+    // The previous implementation lowered to `readInt(u512) % field_order`,
+    // i.e. variable-time compiler_rt big-integer modulo over SECRET material
+    // (OPRF blinds and derived scalars). `ScalarOps.reduce64` performs the same
+    // little-endian 512-bit-mod-L math using the pinned std's constant-time limb
+    // arithmetic (ScalarDouble.fromBytes64 reads/writes LE limbs identically),
+    // so the result is byte-for-byte identical -- the RFC 9807 vectors are the
+    // proof of equivalence -- while removing the timing side channel.
+    return ScalarOps.reduce64(uniform);
 }
 
 fn invertScalar(scalar: Scalar) Scalar {

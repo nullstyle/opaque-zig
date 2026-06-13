@@ -3,6 +3,10 @@ const root = @import("opaque_root");
 const opaque_mod = root.protocol;
 const messages = root.messages;
 
+// These negative/round-trip tests assert protocol behavior, not KSF strength.
+// Pin the identity KSF so they stay fast (Suite.default now runs real Argon2id).
+const test_suite = opaque_mod.Suite{ .ksf = .identity_test_only };
+
 const CredentialFixture = struct {
     server_private_key: [32]u8,
     server_public_key: [32]u8,
@@ -20,11 +24,12 @@ test "login with wrong password fails before KE3" {
 
     const allocator = std.testing.allocator;
     const fixture = try register(allocator);
-    const login = try startLogin(allocator, fixture, "not the password");
+    const wrong_password = "not the password";
+    const login = try startLogin(allocator, fixture, wrong_password);
 
     try std.testing.expectError(
         error.AuthenticationFailed,
-        opaque_mod.generateKE3(opaque_mod.Suite.default, allocator, login.start.state, login.server.ke2, null, null, undefined),
+        opaque_mod.generateKE3(test_suite, allocator, login.start.state, login.server.ke2, wrong_password, null, null, null),
     );
 }
 
@@ -38,7 +43,7 @@ test "tampered server MAC fails client authentication" {
 
     try std.testing.expectError(
         error.AuthenticationFailed,
-        opaque_mod.generateKE3(opaque_mod.Suite.default, allocator, login.start.state, login.server.ke2, null, null, undefined),
+        opaque_mod.generateKE3(test_suite, allocator, login.start.state, login.server.ke2, good_password, null, null, null),
     );
 }
 
@@ -52,7 +57,7 @@ test "tampered registration envelope fails credential recovery" {
 
     try std.testing.expectError(
         error.AuthenticationFailed,
-        opaque_mod.generateKE3(opaque_mod.Suite.default, allocator, login.start.state, login.server.ke2, null, null, undefined),
+        opaque_mod.generateKE3(test_suite, allocator, login.start.state, login.server.ke2, good_password, null, null, null),
     );
 }
 
@@ -62,11 +67,21 @@ test "tampered registration record fails server authentication" {
     const allocator = std.testing.allocator;
     var fixture = try register(allocator);
     fixture.record.client_public_key[0] ^= 0x01;
-    const login = try startLogin(allocator, fixture, good_password);
+
+    // A tampered client_public_key must abort the login. With curve25519 any
+    // 32-byte key is accepted by scalarmult, so the corruption surfaces as an
+    // AuthenticationFailed during KE3. With ristretto255 the corrupted point is
+    // non-canonical and rejected when the server's 3DH deserializes it during
+    // KE2 (inside startLogin). Both outcomes mean the tampered record cannot
+    // authenticate; accept whichever the active group produces.
+    const login = startLogin(allocator, fixture, good_password) catch |err| {
+        try std.testing.expect(err == error.DeserializeError or err == error.AuthenticationFailed);
+        return;
+    };
 
     try std.testing.expectError(
         error.AuthenticationFailed,
-        opaque_mod.generateKE3(opaque_mod.Suite.default, allocator, login.start.state, login.server.ke2, null, null, undefined),
+        opaque_mod.generateKE3(test_suite, allocator, login.start.state, login.server.ke2, good_password, null, null, null),
     );
 }
 
@@ -76,7 +91,7 @@ test "server finish rejects bad KE3" {
     const allocator = std.testing.allocator;
     const fixture = try register(allocator);
     const login = try startLogin(allocator, fixture, good_password);
-    var finish = try opaque_mod.generateKE3(opaque_mod.Suite.default, allocator, login.start.state, login.server.ke2, null, null, undefined);
+    var finish = try opaque_mod.generateKE3(test_suite, allocator, login.start.state, login.server.ke2, good_password, null, null, null);
     finish.ke3.client_mac[0] ^= 0x01;
 
     try std.testing.expectError(error.AuthenticationFailed, opaque_mod.serverFinish(login.server.state, finish.ke3));
@@ -86,13 +101,13 @@ test "empty explicit identities are rejected" {
     if (!try oprfRuntimeSupported()) return error.SkipZigTest;
 
     const allocator = std.testing.allocator;
-    const server_keypair = try std.crypto.dh.X25519.KeyPair.generateDeterministic(seed(0x11));
+    const server_keypair = try opaque_mod.Group.ristretto255.deriveDhKeyPair(seed(0x11));
     const reg_start = try opaque_mod.createRegistrationRequest(good_password, scalar(0x03));
-    const reg_response = try opaque_mod.createRegistrationResponse(reg_start.request, server_keypair.public_key, credential_identifier, seed64(0x22));
+    const reg_response = try opaque_mod.createRegistrationResponse(reg_start.request, server_keypair.pk, credential_identifier, seed64(0x22));
 
     try std.testing.expectError(
         error.InvalidInput,
-        opaque_mod.finalizeRegistrationRequest(opaque_mod.Suite.default, allocator, reg_start.state, reg_response, seed(0x44), "", null, undefined),
+        opaque_mod.finalizeRegistrationRequest(test_suite, allocator, reg_start.state, reg_response, seed(0x44), good_password, "", null, null),
     );
 }
 
@@ -109,11 +124,11 @@ test "oversized context and credential identifiers are rejected" {
     if (!try oprfRuntimeSupported()) return error.SkipZigTest;
 
     const fixture = try register(allocator);
-    const login_start = try opaque_mod.generateKE1(good_password, scalar(0x05), seed(0x66), seed(0x77));
+    const login_start = try opaque_mod.generateKE1(test_suite, good_password, scalar(0x05), seed(0x66), seed(0x77));
     try std.testing.expectError(
         error.InvalidInput,
         opaque_mod.generateKE2(
-            .{ .context = &too_long, .ksf = .identity },
+            .{ .context = &too_long, .ksf = .identity_test_only },
             fixture.server_private_key,
             fixture.server_public_key,
             fixture.record,
@@ -133,16 +148,16 @@ const good_password = "correct horse battery staple";
 const credential_identifier = "alice@example.test";
 
 fn register(allocator: std.mem.Allocator) !CredentialFixture {
-    const server_keypair = try std.crypto.dh.X25519.KeyPair.generateDeterministic(seed(0x11));
+    const server_keypair = try opaque_mod.Group.ristretto255.deriveDhKeyPair(seed(0x11));
     const oprf_seed = seed64(0x22);
 
     const reg_start = try opaque_mod.createRegistrationRequest(good_password, scalar(0x03));
-    const reg_response = try opaque_mod.createRegistrationResponse(reg_start.request, server_keypair.public_key, credential_identifier, oprf_seed);
-    const reg_finish = try opaque_mod.finalizeRegistrationRequest(opaque_mod.Suite.default, allocator, reg_start.state, reg_response, seed(0x44), null, null, undefined);
+    const reg_response = try opaque_mod.createRegistrationResponse(reg_start.request, server_keypair.pk, credential_identifier, oprf_seed);
+    const reg_finish = try opaque_mod.finalizeRegistrationRequest(test_suite, allocator, reg_start.state, reg_response, seed(0x44), good_password, null, null, null);
 
     return .{
-        .server_private_key = server_keypair.secret_key,
-        .server_public_key = server_keypair.public_key,
+        .server_private_key = server_keypair.sk,
+        .server_public_key = server_keypair.pk,
         .oprf_seed = oprf_seed,
         .record = reg_finish.record,
     };
@@ -150,9 +165,9 @@ fn register(allocator: std.mem.Allocator) !CredentialFixture {
 
 fn startLogin(allocator: std.mem.Allocator, fixture: CredentialFixture, password: []const u8) !LoginFixture {
     _ = allocator;
-    const login_start = try opaque_mod.generateKE1(password, scalar(0x05), seed(0x66), seed(0x77));
+    const login_start = try opaque_mod.generateKE1(test_suite, password, scalar(0x05), seed(0x66), seed(0x77));
     const server_start = try opaque_mod.generateKE2(
-        opaque_mod.Suite.default,
+        test_suite,
         fixture.server_private_key,
         fixture.server_public_key,
         fixture.record,

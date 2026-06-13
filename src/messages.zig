@@ -31,9 +31,22 @@ pub const Envelope = struct {
     }
 };
 
-pub const RegistrationRequest = fixedStruct("RegistrationRequest", c.registration_request_len, struct {
+pub const RegistrationRequest = struct {
     blinded_message: [c.Noe]u8,
-});
+
+    pub fn parse(bytes: []const u8) Error!RegistrationRequest {
+        if (bytes.len != c.registration_request_len) return error.InvalidLength;
+        return .{ .blinded_message = bytes[0..c.Noe].* };
+    }
+
+    pub fn toBytes(self: RegistrationRequest) [c.registration_request_len]u8 {
+        return self.blinded_message;
+    }
+
+    pub fn toBytesInto(self: RegistrationRequest, out: *[c.registration_request_len]u8) void {
+        @memcpy(out, &self.blinded_message);
+    }
+};
 
 pub const RegistrationResponse = struct {
     evaluated_message: [c.Noe]u8,
@@ -86,9 +99,22 @@ pub const RegistrationRecord = struct {
     }
 };
 
-pub const CredentialRequest = fixedStruct("CredentialRequest", c.credential_request_len, struct {
+pub const CredentialRequest = struct {
     blinded_message: [c.Noe]u8,
-});
+
+    pub fn parse(bytes: []const u8) Error!CredentialRequest {
+        if (bytes.len != c.credential_request_len) return error.InvalidLength;
+        return .{ .blinded_message = bytes[0..c.Noe].* };
+    }
+
+    pub fn toBytes(self: CredentialRequest) [c.credential_request_len]u8 {
+        return self.blinded_message;
+    }
+
+    pub fn toBytesInto(self: CredentialRequest, out: *[c.credential_request_len]u8) void {
+        @memcpy(out, &self.blinded_message);
+    }
+};
 
 pub const CredentialResponse = struct {
     evaluated_message: [c.Noe]u8,
@@ -220,42 +246,6 @@ pub const KE3 = struct {
         @memcpy(out, &self.client_mac);
     }
 };
-
-pub const CleartextCredentials = struct {
-    server_public_key: [c.Npk]u8,
-    server_identity: []const u8,
-    client_identity: []const u8,
-
-    pub fn init(server_public_key: [c.Npk]u8, client_public_key: [c.Npk]u8, server_identity: ?[]const u8, client_identity: ?[]const u8) CleartextCredentials {
-        return .{
-            .server_public_key = server_public_key,
-            .server_identity = server_identity orelse &server_public_key,
-            .client_identity = client_identity orelse &client_public_key,
-        };
-    }
-};
-
-fn fixedStruct(comptime name: []const u8, comptime len: usize, comptime Fields: type) type {
-    _ = name;
-    _ = len;
-    _ = Fields;
-    return struct {
-        blinded_message: [c.Noe]u8,
-
-        pub fn parse(bytes: []const u8) Error!@This() {
-            if (bytes.len != c.Noe) return error.InvalidLength;
-            return .{ .blinded_message = bytes[0..c.Noe].* };
-        }
-
-        pub fn toBytes(self: @This()) [c.Noe]u8 {
-            return self.blinded_message;
-        }
-
-        pub fn toBytesInto(self: @This(), out: *[c.Noe]u8) void {
-            @memcpy(out, &self.blinded_message);
-        }
-    };
-}
 
 test "message structs are referenced" {
     _ = RegistrationRequest;
