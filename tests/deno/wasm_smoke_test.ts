@@ -19,7 +19,7 @@ import {
 // output byte-for-byte, not just lengths.
 Deno.test("WASM wrapper reproduces RFC 9807 C.1.1 byte-exact (ristretto255 + Identity KSF)", async () => {
   const opaque = await instantiateOpaqueWasmFromFile(resolveWasmUrl());
-  opaque.assertVersion(3);
+  opaque.assertVersion(4);
 
   // --- C.1.1.2 Input Values ---
   const oprfSeed = hex(

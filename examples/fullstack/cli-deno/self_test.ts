@@ -80,7 +80,7 @@ function random(n: number): Uint8Array {
 
 Deno.test("CLI wrapper path: production Argon2id round trip, client and server session keys match", async () => {
   const opaque = await instantiateOpaqueWasmFromFile(resolveWasmPath());
-  opaque.assertVersion(3);
+  opaque.assertVersion(4);
 
   const username = "alice@example.com";
   const credentialIdentifier = utf8Encode(username); // server: credential_identifier = username bytes
@@ -208,7 +208,7 @@ Deno.test("CLI wrapper path: production Argon2id round trip, client and server s
 
 Deno.test("wrong password fails the KE2 MAC at loginFinish (no session key)", async () => {
   const opaque = await instantiateOpaqueWasmFromFile(resolveWasmPath());
-  opaque.assertVersion(3);
+  opaque.assertVersion(4);
 
   const credentialIdentifier = utf8Encode("bob");
   const password = utf8Encode("right password");

@@ -16,7 +16,7 @@ This package is early-stage cryptographic software. It has not been audited, har
 
 ## Randomness
 
-Callers must supply all protocol randomness. The Zig API accepts blinds, nonces, envelope nonces, keyshare seeds, server keys, and OPRF seed material as explicit byte arrays. Browser and Deno callers should generate these bytes with a cryptographically secure source such as `crypto.getRandomValues()`. The WASM ABI v3 registration and login-start blind inputs are 64-byte uniform random values.
+Callers must supply all protocol randomness. The Zig API accepts blinds, nonces, envelope nonces, keyshare seeds, server keys, and OPRF seed material as explicit byte arrays. Browser and Deno callers should generate these bytes with a cryptographically secure source such as `crypto.getRandomValues()`. The WASM ABI v4 registration and login-start blind inputs are 64-byte uniform random values.
 
 Never reuse values that are required to be fresh, including OPRF blinds, nonces, envelope nonces, or keyshare seeds.
 

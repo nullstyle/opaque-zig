@@ -72,7 +72,7 @@
 
         try {
           const opaque = await instantiateOpaqueWasm(wasmUrl.value);
-          opaque.assertVersion(3);
+          opaque.assertVersion(4);
 
           const blindUniform = crypto.getRandomValues(new Uint8Array(64));
           const input = encodeRegistrationStartInput({

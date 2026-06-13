@@ -37,7 +37,7 @@ const Status = enum(i32) {
 };
 
 test "WASM ABI exported lengths match protocol constants" {
-    try std.testing.expectEqual(@as(u32, 3), opaque_wasm.version());
+    try std.testing.expectEqual(@as(u32, 4), opaque_wasm.version());
     try std.testing.expectEqual(@as(u32, registration_request_len), opaque_wasm.registrationRequestLen());
     try std.testing.expectEqual(@as(u32, registration_response_len), opaque_wasm.registrationResponseLen());
     try std.testing.expectEqual(@as(u32, registration_record_len), opaque_wasm.registrationRecordLen());
@@ -291,18 +291,28 @@ const InputBuilder = struct {
 // resetAllocator() between steps exactly as the JS wrapper does, clearing only
 // the transient KSF scratch.
 fn runRistretto255RoundTrip(variant: RoundTripVariant) !void {
+    // Default keys for the variant-driven round trips: derive a real DH keypair
+    // directly via the protocol (the AKE needs consistent
+    // server_private_key/server_public_key; generateKE2 runs
+    // diffieHellman(server_private_key, client_keyshare)).
+    const server_seed: [Nseed]u8 = @splat(0x5a);
+    const server_keypair = try protocol.Group.ristretto255.deriveDhKeyPair(server_seed);
+    try runRistretto255RoundTripWithServerKeys(variant, server_keypair.sk, server_keypair.pk);
+}
+
+// Same round trip as runRistretto255RoundTrip but with the long-term server
+// keypair supplied by the caller, so the serverKeyPair-export test can prove the
+// keypair it generates is VALID end to end (the client/server confirmed session
+// keys only agree if server_public_key = basepoint * server_private_key, exactly
+// what serverKeyPair guarantees).
+fn runRistretto255RoundTripWithServerKeys(
+    variant: RoundTripVariant,
+    server_private_key: [Nsk]u8,
+    server_public_key: [Npk]u8,
+) !void {
     const password = "correct horse battery staple";
     const context = "OPAQUE-POC";
     const credential_identifier = "user-42";
-
-    // Long-term server keys. We need a real DH keypair so the AKE's
-    // server_private_key/server_public_key are consistent (generateKE2 runs
-    // diffieHellman(server_private_key, client_keyshare)); derive it from a seed
-    // via the same group the ABI uses (ristretto255).
-    const server_seed: [Nseed]u8 = @splat(0x5a);
-    const server_keypair = try protocol.Group.ristretto255.deriveDhKeyPair(server_seed);
-    const server_private_key = server_keypair.sk;
-    const server_public_key = server_keypair.pk;
     const oprf_seed: [Nh]u8 = @splat(0x6b);
 
     // --- 1. registrationStart: blind_uniform(64) || password ---
@@ -436,6 +446,95 @@ test "WASM ABI identity ristretto255 round trip agrees on session key" {
     // loginStart is shared with the production path, so this also confirms its
     // ristretto255 keyshare is consistent with the identity finishes.
     try runRistretto255RoundTrip(.identity);
+}
+
+test "WASM ABI serverKeyPair exported length matches Nsk + Npk" {
+    try std.testing.expectEqual(@as(u32, Nsk + Npk), opaque_wasm.serverKeyPairLen());
+}
+
+test "WASM ABI serverKeyPair is deterministic and rejects wrong-length seeds" {
+    // Determinism: the same seed must yield the same sk||pk. We read the bytes via
+    // the slice-level test_api so this runs on all targets (no u32 arena needed).
+    const seed: [Nseed]u8 = @splat(0x42);
+
+    var first: [Nsk + Npk]u8 = undefined;
+    try expectStatus(.ok, opaque_wasm.test_api.serverKeyPairToSlice(&seed, &first));
+
+    var second: [Nsk + Npk]u8 = undefined;
+    try expectStatus(.ok, opaque_wasm.test_api.serverKeyPairToSlice(&seed, &second));
+    try std.testing.expectEqualSlices(u8, &first, &second);
+
+    // The generated keypair must agree with the protocol's own derivation: sk is
+    // the scalar and pk = basepoint * sk on ristretto255.
+    const expected = try protocol.Group.ristretto255.deriveDhKeyPair(seed);
+    try std.testing.expectEqualSlices(u8, &expected.sk, first[0..Nsk]);
+    try std.testing.expectEqualSlices(u8, &expected.pk, first[Nsk..][0..Npk]);
+
+    // A different seed yields a different keypair (sanity that the seed is used).
+    const other_seed: [Nseed]u8 = @splat(0x43);
+    var other: [Nsk + Npk]u8 = undefined;
+    try expectStatus(.ok, opaque_wasm.test_api.serverKeyPairToSlice(&other_seed, &other));
+    try std.testing.expect(!std.mem.eql(u8, &first, &other));
+
+    // Wrong-length seeds are rejected (exact-length input): one byte short, one
+    // byte long, and empty.
+    const short: [Nseed - 1]u8 = @splat(0x42);
+    try expectStatus(.invalid_input, opaque_wasm.test_api.serverKeyPair(&short));
+    const long: [Nseed + 1]u8 = @splat(0x42);
+    try expectStatus(.invalid_input, opaque_wasm.test_api.serverKeyPair(&long));
+    try expectStatus(.invalid_input, opaque_wasm.test_api.serverKeyPair(&[_]u8{}));
+}
+
+test "WASM ABI serverKeyPair rejects wrong-length seed via the pointer ABI" {
+    // Drive the production pointer-ABI export with a wrong-length input and assert
+    // it returns invalid_input WITHOUT writing the result descriptor (it must be
+    // left untouched). This exercises the exported entry point, not just test_api.
+    var descriptor: [8]u8 = @splat(0xaa);
+    const descriptor_ptr = ptrToU32(&descriptor) orelse return error.SkipZigTest;
+    try expectStatus(.invalid_input, opaque_wasm.serverKeyPair(0, Nseed - 1, descriptor_ptr));
+    const unchanged: [descriptor.len]u8 = @splat(0xaa);
+    try std.testing.expectEqualSlices(u8, &unchanged, &descriptor);
+}
+
+test "WASM ABI serverKeyPair writes a valid keypair descriptor" {
+    // Pointer-ABI happy path: generate a keypair through the real descriptor
+    // mechanism and confirm both halves are present and match the protocol's
+    // derivation. SKIPs on a native target whose static buffer sits above 2^32
+    // (same as the other descriptor tests); runs for real in the wasm32 / Deno path.
+    opaque_wasm.resetAllocator();
+
+    const seed: [Nseed]u8 = @splat(0x77);
+    const input_ptr = try allocCopy(&seed);
+    const descriptor_ptr = try allocBytes(8);
+    const status = opaque_wasm.serverKeyPair(input_ptr, Nseed, descriptor_ptr);
+    if (status == @intFromEnum(Status.protocol_error)) return error.SkipZigTest;
+    try expectStatus(.ok, status);
+
+    const descriptor = heapBytes(descriptor_ptr, 8);
+    const result_ptr = std.mem.readInt(u32, descriptor[0..4], .little);
+    const result_len = std.mem.readInt(u32, descriptor[4..8], .little);
+    try std.testing.expect(result_ptr != 0);
+    try std.testing.expectEqual(@as(u32, Nsk + Npk), result_len);
+
+    const result = heapBytes(result_ptr, Nsk + Npk);
+    const expected = try protocol.Group.ristretto255.deriveDhKeyPair(seed);
+    try std.testing.expectEqualSlices(u8, &expected.sk, result[0..Nsk]);
+    try std.testing.expectEqualSlices(u8, &expected.pk, result[Nsk..][0..Npk]);
+}
+
+test "WASM ABI serverKeyPair generates keys that drive a full round trip (production)" {
+    // The real proof the export is correct: feed a serverKeyPair-generated (sk, pk)
+    // into the full ristretto255 server round trip (registration + login through
+    // serverLoginFinish) and require the client and server confirmed session keys
+    // to AGREE. They only agree if pk = basepoint * sk, which is exactly what
+    // serverKeyPair guarantees. Uses the production argon2id finish/start path.
+    const seed: [Nseed]u8 = @splat(0x91);
+    var keypair: [Nsk + Npk]u8 = undefined;
+    try expectStatus(.ok, opaque_wasm.test_api.serverKeyPairToSlice(&seed, &keypair));
+    const server_private_key = keypair[0..Nsk].*;
+    const server_public_key = keypair[Nsk..][0..Npk].*;
+
+    try runRistretto255RoundTripWithServerKeys(.production, server_private_key, server_public_key);
 }
 
 fn expectStatus(expected: Status, actual: i32) !void {

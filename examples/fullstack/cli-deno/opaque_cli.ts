@@ -3,7 +3,7 @@
  * OPAQUE full-stack Deno CLI.
  *
  * Registers and authenticates against the OPAQUE HTTP server described in
- * ../protocol.md, using the `nullstyle/opaque-zig` WASM module (ABI v3,
+ * ../protocol.md, using the `nullstyle/opaque-zig` WASM module (ABI v4,
  * production Argon2id KSF) via the repository's TypeScript wrappers in web/.
  *
  *   deno run --allow-read --allow-net --allow-env opaque_cli.ts register <username> <password>
@@ -250,7 +250,7 @@ async function main(): Promise<void> {
   }
 
   const opaque = await instantiateOpaqueWasmFromFile(resolveWasmPath());
-  opaque.assertVersion(3); // require ABI v3 (production Argon2id exports)
+  opaque.assertVersion(4); // require ABI v4 (production Argon2id exports + serverKeyPair)
 
   const password = utf8Encode(passwordArg);
   try {

@@ -76,6 +76,14 @@ pub const test_api = if (builtin.is_test) struct {
         return serverRegistrationResponseInput(input, .{ .slice = out });
     }
 
+    pub fn serverKeyPair(input: []const u8) i32 {
+        return serverKeyPairInput(input, .none);
+    }
+
+    pub fn serverKeyPairToSlice(input: []const u8, out: []u8) i32 {
+        return serverKeyPairInput(input, .{ .slice = out });
+    }
+
     // --- Production-KSF (argon2id_owasp) finish/start, writing to a slice. ---
     pub fn registrationFinishToSlice(input: []const u8, out: []u8) i32 {
         return registrationFinishWithSuiteInput(input, .{ .slice = out }, wasm_production_ksf);
@@ -201,6 +209,10 @@ pub export fn ke2Len() u32 {
 
 pub export fn ke3Len() u32 {
     return @import("constants.zig").ke3_len;
+}
+
+pub export fn serverKeyPairLen() u32 {
+    return constants.Nsk + constants.Npk;
 }
 
 pub export fn registrationStart(input_ptr: u32, input_len: u32, out_ptr: u32) i32 {
@@ -466,6 +478,41 @@ fn serverRegistrationResponseInput(input: []const u8, sink: ResultSink) i32 {
     var out = (sink.begin(constants.registration_response_len) catch |err| return mapSinkError(err)) orelse return @intFromEnum(Status.ok);
     const response_bytes = response.toBytes();
     @memcpy(out[0..constants.registration_response_len], &response_bytes);
+    return sink.finish(out);
+}
+
+/// Derive the server's long-term ristretto255 DH keypair (RFC 9807 Section
+/// 6.4.1.1) from a 32-byte seed. Without this a Deno/browser-hosted server could
+/// answer the protocol exports (which take the keypair as INPUT) but had no way
+/// to MINT one; this is the missing server key-generation primitive.
+///
+/// This is a PRODUCTION export (not gated behind -Dtest-exports): it runs no KSF
+/// and handles no caller secrets beyond the seed, so it is safe to ship.
+///
+/// Input layout (exact-length):
+///   [0 .. Nseed)   seed   (Nseed = 32)
+/// The whole input must be exactly Nseed bytes (no trailing bytes).
+///
+/// Output (written to the allocated result buffer, descriptor at out_ptr):
+///   Nsk + Npk (= 64) bytes: server_private_key[32] || server_public_key[32],
+///   where pk = basepoint * sk on ristretto255.
+pub export fn serverKeyPair(input_ptr: u32, input_len: u32, out_ptr: u32) i32 {
+    validateOutputDescriptor(out_ptr) catch return @intFromEnum(Status.invalid_input);
+    const input = inputSlice(input_ptr, input_len) catch return @intFromEnum(Status.invalid_input);
+    return serverKeyPairInput(input, .{ .descriptor = out_ptr });
+}
+
+fn serverKeyPairInput(input: []const u8, sink: ResultSink) i32 {
+    // Exact-length: a server seed is always Nseed bytes; anything else is a
+    // caller error, not a short read.
+    if (input.len != constants.Nseed) return @intFromEnum(Status.invalid_input);
+
+    const seed = input[0..constants.Nseed].*;
+    const kp = protocol.Group.ristretto255.deriveDhKeyPair(seed) catch |err| return mapProtocolError(err);
+
+    var out = (sink.begin(constants.Nsk + constants.Npk) catch |err| return mapSinkError(err)) orelse return @intFromEnum(Status.ok);
+    @memcpy(out[0..constants.Nsk], &kp.sk);
+    @memcpy(out[constants.Nsk..][0..constants.Npk], &kp.pk);
     return sink.finish(out);
 }
 

@@ -78,7 +78,7 @@ See [`protocol.md`](protocol.md) for the exact HTTP contract and crypto config.
 |---|---|---|---|
 | [`server-go/`](server-go/) | Go + bytemare/opaque | server | stdlib `net/http`; in-memory record + pending-login store; `GetFakeRecord` for unknown users; `go test ./...` drives a bytemare *client* through the handlers as an isolation check |
 | [`cli-zig/`](cli-zig/) | native Zig + opaque-zig | client | path-depends on the repo's `opaque` module; `std.http.Client`; `zig build test` runs an in-process opaque-zig client↔server round trip |
-| [`cli-deno/`](cli-deno/) | Deno + opaque-zig WASM | client | uses the production `zig-out/wasm/opaque.wasm` (ABI v3, Argon2id) via `web/` wrappers; `deno test self_test.ts` runs a full in-wasm round trip |
+| [`cli-deno/`](cli-deno/) | Deno + opaque-zig WASM | client | uses the production `zig-out/wasm/opaque.wasm` (ABI v4, Argon2id) via `web/` wrappers; `deno test self_test.ts` runs a full in-wasm round trip |
 
 CLI usage (after `run.sh` has built them, or build per-component):
 

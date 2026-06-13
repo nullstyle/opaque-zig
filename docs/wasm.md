@@ -16,7 +16,11 @@ Build output is installed at `zig-out/wasm/opaque.wasm`.
 
 ## ABI version and group
 
-`version()` returns the WASM ABI version. The current version is **3**.
+`version()` returns the WASM ABI version. The current version is **4**.
+
+Version 4 is an **additive** bump over 3: it adds the `serverKeyPair` export (and
+its `serverKeyPairLen` helper) for server long-term key generation. Every message
+byte size and existing export is unchanged from version 3.
 
 The ABI is **ristretto255-only**. Both the OPRF (always ristretto255-SHA512)
 and the 3DH AKE run on ristretto255 across every export, so the WASM flows are
@@ -43,9 +47,11 @@ registrationRecordLen() u32
 ke1Len() u32
 ke2Len() u32
 ke3Len() u32
+serverKeyPairLen() u32
 registrationStart(input_ptr: u32, input_len: u32, out_ptr: u32) i32
 registrationFinish(input_ptr: u32, input_len: u32, out_ptr: u32) i32
 serverRegistrationResponse(input_ptr: u32, input_len: u32, out_ptr: u32) i32
+serverKeyPair(input_ptr: u32, input_len: u32, out_ptr: u32) i32
 loginStart(input_ptr: u32, input_len: u32, out_ptr: u32) i32
 loginFinish(input_ptr: u32, input_len: u32, out_ptr: u32) i32
 serverLoginStart(input_ptr: u32, input_len: u32, out_ptr: u32) i32
@@ -209,6 +215,30 @@ RegistrationResponse[64]
 
 where `RegistrationResponse` is `evaluated_message[32] || server_public_key[32]`.
 
+`serverKeyPair` input (server long-term key generation; derives the ristretto255
+DH keypair from a seed, RFC 9807 Section 6.4.1.1):
+
+```text
+seed[32]
+```
+
+The input must be exactly 32 bytes (any other length returns `invalid_input`).
+The seed must be fresh entropy (`crypto.getRandomValues(new Uint8Array(32))`).
+Derivation is deterministic and group-fixed (ristretto255). This is a
+**production** export: it runs no KSF and handles no caller secrets beyond the
+seed, so it ships in the default artifact.
+
+Output:
+
+```text
+server_private_key[32] || server_public_key[32]
+```
+
+where `server_public_key = basepoint * server_private_key`. Feed `sk` to
+`server_private_key` and `pk` to `server_public_key` in `serverLoginStart` /
+`serverRegistrationResponse`. Persist the seed (or `sk`) — both are long-term
+server secrets; treat them with the same care as any other returned secret.
+
 `loginStart` input:
 
 ```text
@@ -305,7 +335,7 @@ import {
 } from "./web/browser.ts";
 
 const opaque = await instantiateOpaqueWasm("/zig-out/wasm/opaque.wasm");
-opaque.assertVersion(3);
+opaque.assertVersion(4);
 
 const blind = crypto.getRandomValues(new Uint8Array(64));
 const response = opaque.registrationStart(encodeRegistrationStartInput({

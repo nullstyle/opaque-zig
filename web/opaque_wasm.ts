@@ -1,6 +1,6 @@
 const OUTPUT_DESCRIPTOR_BYTES = 8;
 
-export const OPAQUE_WASM_ABI_VERSION = 3;
+export const OPAQUE_WASM_ABI_VERSION = 4;
 export const OPAQUE_WASM_STATUS = Object.freeze({
   ok: 0,
   protocolError: 1,
@@ -8,9 +8,11 @@ export const OPAQUE_WASM_STATUS = Object.freeze({
   outOfMemory: 3,
 });
 
-// Byte sizes for the ristretto255-only ABI v3. These are UNCHANGED from v2:
-// ristretto255 and curve25519 both use 32-byte group elements/keys, so the
-// message framing is identical across the version bump.
+// Byte sizes for the ristretto255-only ABI. These are UNCHANGED from v2 through
+// v4: ristretto255 and curve25519 both use 32-byte group elements/keys, so the
+// message framing is identical across every version bump (v4 only ADDS the
+// serverKeyPair export, which reuses the existing seed/blind/publicKey sizes).
+// The table is exported as both OPAQUE_WASM_V3 and OPAQUE_WASM_V4 (alias below).
 export const OPAQUE_WASM_V3 = Object.freeze({
   blindUniform: 64,
   blind: 32,
@@ -30,12 +32,20 @@ export const OPAQUE_WASM_V3 = Object.freeze({
   serverLoginState: 128,
 });
 
+// ABI v4 adds the additive `serverKeyPair` export; every message byte size is
+// UNCHANGED from v3 (ristretto255 group elements/keys are 32 bytes, and the new
+// export only combines the existing seed/blind/publicKey sizes). `OPAQUE_WASM_V4`
+// is therefore the same size table as `OPAQUE_WASM_V3`, re-exported under the
+// version-matched name; `OPAQUE_WASM_V3` is kept as an alias for existing callers.
+export const OPAQUE_WASM_V4 = OPAQUE_WASM_V3;
+
 // Production exports: always present in the shipped wasm artifact and required by
 // assertOpaqueExports when an instance is loaded.
 const PRODUCTION_OPERATIONS = [
   "registrationStart",
   "registrationFinish",
   "serverRegistrationResponse",
+  "serverKeyPair",
   "loginStart",
   "loginFinish",
   "serverLoginStart",
@@ -73,6 +83,7 @@ export type OpaqueExports = WebAssembly.Exports & {
   ke1Len(): number;
   ke2Len(): number;
   ke3Len(): number;
+  serverKeyPairLen(): number;
 } & { [K in ProductionOperation]: WasmOperation } & {
   // Gated test-vector exports are optional: only present with -Dtest-exports=true.
   [K in GatedOperation]?: WasmOperation;
@@ -255,6 +266,31 @@ export class OpaqueWasm {
    */
   serverRegistrationResponse(input: Uint8Array): Uint8Array {
     return this.callBytes("serverRegistrationResponse", input);
+  }
+
+  /**
+   * Derive the server's long-term ristretto255 DH keypair (RFC 9807 Section
+   * 6.4.1.1) from a 32-byte seed. This is the server key-generation primitive:
+   * the protocol operations (`serverLoginStart`, `serverRegistrationResponse`)
+   * take `serverPrivateKey`/`serverPublicKey` as input but cannot mint them.
+   *
+   * `seed` must be exactly 32 bytes (`OPAQUE_WASM_V4.seed`); pass freshly
+   * generated entropy (`crypto.getRandomValues(new Uint8Array(32))`). The same
+   * seed always yields the same keypair, so persist the seed (or the resulting
+   * `sk`) — both are long-term server secrets and follow the lifetime rules in
+   * the class docs (they live in JS GC memory; zero them when done).
+   *
+   * Returns `{ sk, pk }` where `sk` is the 32-byte private scalar to feed to
+   * `serverPrivateKey` and `pk` is the 32-byte serialized public element for
+   * `serverPublicKey`.
+   */
+  serverKeyPair(seed: Uint8Array): { sk: Uint8Array; pk: Uint8Array } {
+    const input = fixed(seed, "seed", OPAQUE_WASM_V4.seed);
+    const out = this.callBytes("serverKeyPair", input);
+    return {
+      sk: out.slice(0, OPAQUE_WASM_V4.blind),
+      pk: out.slice(OPAQUE_WASM_V4.blind, OPAQUE_WASM_V4.blind + OPAQUE_WASM_V4.publicKey),
+    };
   }
 
   loginStart(input: Uint8Array): Uint8Array {

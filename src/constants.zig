@@ -1,4 +1,4 @@
-pub const wasm_abi_version: u32 = 3;
+pub const wasm_abi_version: u32 = 4;
 
 pub const Nn: usize = 32;
 pub const Nseed: usize = 32;

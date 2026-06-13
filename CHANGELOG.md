@@ -26,6 +26,13 @@ still pre-1.0 and not yet frozen. The library remains unaudited.
   indistinguishably.
 - **Server-side registration over WASM**: new `serverRegistrationResponse`
   export, completing the Deno/browser server enrollment flow.
+- **Server key generation over WASM**: new `serverKeyPair` export (with a
+  `serverKeyPairLen` helper) derives the server's long-term ristretto255 DH
+  keypair from a 32-byte seed, so a WASM/Deno-hosted server can mint its own
+  `server_private_key`/`server_public_key` (previously the server protocol
+  exports took the keypair as input but nothing could generate one). Production
+  export: no KSF, no caller secrets beyond the seed. The TypeScript wrapper gains
+  a matching `serverKeyPair(seed): { sk, pk }` method.
 - **Parameterized key stretching**: `Ksf = union(enum){ identity_test_only,
   argon2id: Params }` with named `argon2id_owasp` (t=2, m=19 MiB, p=1) and
   `argon2id_rfc9807` presets.
@@ -46,6 +53,11 @@ still pre-1.0 and not yet frozen. The library remains unaudited.
   from the production artifact; the linear-memory arena is 32 MiB; out-of-memory
   is reported distinctly. The TypeScript wrapper poisons the instance on a wasm
   trap and requires re-instantiation.
+- **WASM ABI v3 → v4** (`version()` returns 4): additive only — adds the
+  `serverKeyPair`/`serverKeyPairLen` exports (see Added). Every message byte size
+  and every existing export is unchanged from v3. The TypeScript wrapper bumps
+  `OPAQUE_WASM_ABI_VERSION` to 4 and adds `OPAQUE_WASM_V4` (an alias of the
+  unchanged `OPAQUE_WASM_V3` size table).
 - **`Suite.default` now stretches passwords** (Argon2id `argon2id_owasp`); the
   previous identity (no-stretching) default is renamed `identity_test_only`.
 - The login/registration password is supplied again at finish and is no longer
