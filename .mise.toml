@@ -114,3 +114,7 @@ depends = ["versions", "fmt", "test", "fuzz-ci", "wasm", "deno-check", "deno-smo
 [tasks.ci-local]
 description = "Run GitHub Actions locally with act"
 run = "act -P ubuntu-latest=ghcr.io/catthehacker/ubuntu:act-latest --container-architecture linux/amd64"
+
+[tasks.interop]
+description = "Run the full-stack OPAQUE interop demo (Go/bytemare server + native Zig and Deno/WASM clients)"
+run = "examples/fullstack/run.sh"

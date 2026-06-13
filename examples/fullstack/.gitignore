@@ -1,0 +1,5 @@
+# Build artifacts (rebuilt by run.sh)
+server-go/opaque-fullstack-server
+cli-zig/.zig-cache/
+cli-zig/.zig-global-cache/
+cli-zig/zig-out/
