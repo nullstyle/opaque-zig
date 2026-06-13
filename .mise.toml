@@ -78,16 +78,23 @@ description = "Run a bounded broad public API fuzz campaign"
 run = "zig build --cache-dir .zig-cache --global-cache-dir .zig-global-cache fuzz-wide --fuzz=2048"
 
 [tasks.fuzz-ci]
-description = "Run bounded fuzz campaigns for CI"
-depends = [
-    "fuzz-messages",
-    "fuzz-oprf",
-    "fuzz-opaque-roundtrip",
-    "fuzz-opaque-tamper",
-    "fuzz-opaque-negative",
-    "fuzz-validation",
-    "fuzz-wasm",
-    "fuzz-wide",
+description = "Run bounded fuzz campaigns for CI, SEQUENTIALLY"
+# These are intentionally NOT a parallel `depends` list. Zig's fuzzer keeps
+# per-unit coverage state in the shared `.zig-cache/v/` directory; running
+# several `zig build fuzz-*` campaigns concurrently against the same cache races
+# on those files and intermittently aborts with
+# `corrupted coverage file ...: pcs_len was zero` (seen in CI, flaky locally).
+# A sequential `run` list serializes the fuzzers (sharing one incremental build)
+# and stops on the first real failure.
+run = [
+    "zig build --cache-dir .zig-cache --global-cache-dir .zig-global-cache fuzz-messages --fuzz=2048",
+    "zig build --cache-dir .zig-cache --global-cache-dir .zig-global-cache fuzz-oprf --fuzz=512",
+    "zig build --cache-dir .zig-cache --global-cache-dir .zig-global-cache fuzz-opaque-roundtrip --fuzz=256",
+    "zig build --cache-dir .zig-cache --global-cache-dir .zig-global-cache fuzz-opaque-tamper --fuzz=256",
+    "zig build --cache-dir .zig-cache --global-cache-dir .zig-global-cache fuzz-opaque-negative --fuzz=256",
+    "zig build --cache-dir .zig-cache --global-cache-dir .zig-global-cache fuzz-validation --fuzz=512",
+    "zig build --cache-dir .zig-cache --global-cache-dir .zig-global-cache fuzz-wasm --fuzz=2048",
+    "zig build --cache-dir .zig-cache --global-cache-dir .zig-global-cache fuzz-wide --fuzz=2048",
 ]
 
 [tasks.deno-check]
