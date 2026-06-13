@@ -1,0 +1,30 @@
+version: 2
+
+# Keeps dependencies patched without giving up immutable pinning. For GitHub
+# Actions, Dependabot updates the pinned commit SHA (and the `# vX.Y.Z` comment)
+# in the workflow when a new release lands, so .github/workflows stays current
+# while remaining SHA-pinned. Review each PR's SHA against the upstream release
+# before merging -- a Dependabot PR is itself an update to trust.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci
+
+  # The full-stack example's Go server pulls a third-party OPAQUE library
+  # (github.com/bytemare/opaque) and its transitive crypto deps; keep them
+  # patched too.
+  - package-ecosystem: gomod
+    directory: /examples/fullstack/server-go
+    schedule:
+      interval: weekly
+    groups:
+      go:
+        patterns: ["*"]
+    commit-message:
+      prefix: examples
